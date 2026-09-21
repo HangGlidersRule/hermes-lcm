@@ -532,6 +532,32 @@ def register(ctx):
     if callable(register_command) and slash_enabled:
         from .command import handle_lcm_command
 
+        def _handle_lcm_slash(raw_args, **kwargs):
+            """Dispatch /lcm against the active runtime engine when available."""
+            active_engine = None
+            try:
+                session_id = str(kwargs.get("session_id") or "")
+                conversation_id = str(
+                    kwargs.get("conversation_id")
+                    or kwargs.get("gateway_session_key")
+                    or ""
+                )
+                active_engine = resolve_active_lcm_engine(
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                )
+                if active_engine is None and conversation_id:
+                    active_engine = resolve_active_lcm_engine(
+                        conversation_id=conversation_id,
+                    )
+                if active_engine is None and session_id:
+                    active_engine = resolve_active_lcm_engine(
+                        session_id=session_id,
+                    )
+            except Exception:
+                active_engine = None
+            return handle_lcm_command(raw_args, active_engine or engine)
+
         register_command(
             "lcm",
             _make_command_handler(

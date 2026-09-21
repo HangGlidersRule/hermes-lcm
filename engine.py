@@ -2148,6 +2148,12 @@ class LCMEngine(CompactionMixin, ResetStateMixin, ReconcileMixin, AuxiliarySessi
         *,
         observed_tokens: int | None = None,
     ) -> bool:
+        # Deferred-maintenance debt is durable across gateway restarts. Honor
+        # the live feature flag before consuming previously recorded debt;
+        # otherwise setting LCM_DEFERRED_MAINTENANCE_ENABLED=false leaves old
+        # conversations triggering under-threshold compaction indefinitely.
+        if not self._config.deferred_maintenance_enabled:
+            return False
         if not self._has_raw_backlog_debt():
             return False
         raw_tokens = self._raw_backlog_tokens(messages)

@@ -1915,6 +1915,39 @@ class TestEngineABC:
         finally:
             instance.shutdown()
 
+    def test_disabled_deferred_maintenance_ignores_persisted_debt(self, tmp_path):
+        config = LCMConfig(
+            database_path=str(tmp_path / "lcm_preflight_deferred_disabled.db"),
+            fresh_tail_count=1,
+            leaf_chunk_tokens=100,
+            deferred_maintenance_enabled=True,
+        )
+        instance = LCMEngine(config=config)
+        instance.on_session_start(
+            "test-session",
+            platform="slack",
+            conversation_id="test-conversation",
+            context_length=10_000,
+        )
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "old backlog " + "x" * 500},
+            {"role": "assistant", "content": "old answer " + "y" * 500},
+            {"role": "user", "content": "fresh"},
+        ]
+        try:
+            instance._lifecycle.record_debt(
+                instance._conversation_id,
+                kind="raw_backlog",
+                size_estimate=instance._raw_backlog_tokens(messages),
+            )
+            assert instance._has_raw_backlog_debt()
+            instance._config.deferred_maintenance_enabled = False
+            assert not instance._has_raw_backlog_debt()
+            assert not instance._should_run_deferred_maintenance(messages)
+        finally:
+            instance.shutdown()
+
     def test_preflight_requests_compaction_when_old_backlog_has_leaf_chunk(self, tmp_path):
         config = LCMConfig(
             database_path=str(tmp_path / "lcm_preflight_leaf_chunk.db"),
