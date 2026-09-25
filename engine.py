@@ -5818,12 +5818,25 @@ class LCMEngine(CompactionMixin, ResetStateMixin, ReconcileMixin, AuxiliarySessi
         )
         return content
 
+    # The anchor is injected into the active context on every compaction and persisted
+    # as a user row. An unbounded anchor of a megabyte-scale message re-enters history,
+    # becomes the next anchor source, and grows recursively across auto-resets (the
+    # Sep 2026 ~1.3-1.8M-token context explosions). Bound it: the operative objective
+    # lives at the head of a real user message; quoted-replay tails are dropped.
+    _ANCHOR_MAX_CHARS = 24_000
+
     def _build_preserved_objective_summary_part(self, message: Dict[str, Any]) -> str:
         content = text_content_for_pattern_matching(message.get("content")) or ""
         content = self._sanitize_preserved_objective_content(
             content,
             role=str(message.get("role") or "user"),
         )
+        if len(content) > self._ANCHOR_MAX_CHARS:
+            content = (
+                content[: self._ANCHOR_MAX_CHARS]
+                + f"\n[… preserved objective truncated at {self._ANCHOR_MAX_CHARS} chars "
+                f"(message was {len(content)} chars); full text recoverable from session history …]"
+            )
         return f"{_PRESERVED_OBJECTIVE_CONTEXT_PREFIX}\n{content}"
 
     def _latest_user_context_anchor(
