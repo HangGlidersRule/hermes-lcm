@@ -20,6 +20,17 @@ from typing import Iterator, List
 
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
+# POSIX fcntl locks belong to (process, file), not to a descriptor: closing ANY
+# descriptor this process holds for a file releases EVERY lock the process holds
+# on it, including the locks of SQLite connections that are already open
+# (https://sqlite.org/howtocorrupt.html, section 2.2). MessageStore runs the
+# permission helpers below on the live database and its sidecars every time it
+# opens (a gateway opens one per agent clone), so they must not open a
+# descriptor on a file that is already private. With its locks dropped, the
+# gateway looks idle to every other process: one closing the database deletes
+# the WAL, rebuilds the -shm index, or checkpoints and shrinks the file under
+# the gateway's mmap (lost commits, "malformed" pages, SIGBUS).
+
 
 def _sqlite_artifact_error(path: Path, reason: str) -> OSError:
     return OSError(errno.EPERM, f"refusing SQLite artifact {path.name!r}: {reason}", str(path))
@@ -79,6 +90,13 @@ def _chmod_sqlite_artifact_at(
         expected = None
     if expected is not None:
         _validate_sqlite_artifact(path, expected)
+        if stat.S_IMODE(expected.st_mode) == 0o600:
+            # Already private: nothing to change, so never open it (see the lock
+            # note at the top of this module). SQLite creates -wal/-shm/-journal
+            # with the database file's mode, so once the database is 0600 every
+            # later call takes this branch. Only a file that still needs its mode
+            # fixed reaches the descriptor path below.
+            return True
 
     flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
